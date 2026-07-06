@@ -7,6 +7,7 @@ local TripRaycastLength = CreateConVar("npc_trip_ray_length", "50", { FCVAR_ARCH
     "Distance to check for props at NPC feet")
 local TripCooldown = CreateConVar("npc_trip_cooldown", "3", { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
     "Seconds before an NPC can trip again")
+local TripNextbots = CreateConVar("npc_trip_nextbots", "0", { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY })
 
 local function CreateRagdollFromNPC(npc)
     if not IsValid(npc) then return end
@@ -60,7 +61,10 @@ hook.Add("Think", "NPCTripping_Check", function()
         nextCheck = currentTime + 0.1
 
         for _, ent in ents.Iterator() do
-            if not IsValid(ent) or not ent:IsNPC() or ent:Health() <= 0 then continue end
+            if not IsValid(ent) or ent:Health() <= 0 then continue end
+            if not TripNextbots:GetBool() and ent:IsNextBot() then continue end
+            if not ent:IsNPC() and not ent:IsNextBot() then continue end
+
             if ent.NPC_TripCooldown and currentTime < ent.NPC_TripCooldown then continue end
 
             local pos = ent:GetPos()
