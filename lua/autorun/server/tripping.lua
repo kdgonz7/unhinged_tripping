@@ -82,7 +82,7 @@ hook.Add("Think", "NPCTripping_Check", function()
 
             if trace.Hit and IsValid(trace.Entity) and
                 (trace.Entity:GetClass() == "prop_physics" or trace.Entity:GetClass() == "prop_ragdoll") then
-                if math.random() > TripChance:GetFloat() then return end
+                if math.random() > TripChance:GetFloat() then continue end
 
                 local weapon = ent:GetActiveWeapon()
                 local weaponClass = IsValid(weapon) and weapon:GetClass() or nil
@@ -192,7 +192,8 @@ hook.Add("EntityTakeDamage", "CheckAndKill", function(target, dmg)
     if not (dmg:IsDamageType(DMG_BULLET) or
             dmg:IsDamageType(DMG_SLASH) or
             dmg:IsDamageType(DMG_BUCKSHOT) or
-            dmg:IsDamageType(DMG_VEHICLE)) then
+            dmg:IsDamageType(DMG_VEHICLE) or
+            dmg:IsDamageType(DMG_CRUSH)) then
         return
     end
 
