@@ -250,8 +250,6 @@ hook.Add("Think", "NPCTripping_Check", function()
             end)
         else
             if not data.started or (npc:GetInternalVariable("m_backtracking") == false and math.random() < 0.1) then
-                print("Time to go to", data.weapon:GetPos())
-
                 timer.Simple(0.5, function()
                     npc:SetLastPosition(data.weapon:GetPos())
                     npc:SetSchedule(SCHED_FORCED_GO_RUN)

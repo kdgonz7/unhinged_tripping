@@ -56,6 +56,25 @@ if CLIENT then
                     "NPCs Trip Over Ragdolls",
                     "npc_trip_over_ragdolls"
                 )
+
+                --npc_trip_weapon_drop_chance
+                --npc_trip_scavenge_range
+                panel:ControlHelp("")
+                panel:NumSlider(
+                    "NPC Weapon Drop Chance 0-1",
+                    "npc_trip_weapon_drop_chance",
+                    0,
+                    1,
+                    2
+                )
+                panel:ControlHelp("")
+                panel:NumSlider(
+                    "NPC Scavenge Range (how far until they pickup gun)",
+                    "npc_trip_scavenge_range",
+                    0,
+                    100,
+                    0
+                )
             end
         )
     end)
