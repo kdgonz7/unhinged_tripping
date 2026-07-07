@@ -15,6 +15,11 @@ local TripWeaponDropChance = CreateConVar("npc_trip_weapon_drop_chance", "0.5",
 local ScavengeRange = CreateConVar("npc_trip_scavenge_range", "45", { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
     "Distance threshold for Combine to play the pickup animation")
 
+-- New ConVar to control if NPCs trip over ragdolls
+local EnableTrippingOverRagdolls = CreateConVar("npc_trip_over_ragdolls", "1",
+    { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
+    "Enables or disables NPC choreography, including tripping over ragdolls and other behaviors.")
+
 local function CreateRagdollFromNPC(npc, dropWeapon)
     if not IsValid(npc) then return end
 
@@ -77,7 +82,7 @@ local function CreateRagdollFromNPC(npc, dropWeapon)
 end
 
 local trippedNPCs = {}
-local scavengingNPCs = {} -- Holds Combine tracking down their dropped weapons
+local scavengingNPCs = {}
 local nextCheck = 0
 
 hook.Add("Think", "NPCTripping_Check", function()
@@ -107,7 +112,8 @@ hook.Add("Think", "NPCTripping_Check", function()
             })
 
             if trace.Hit and IsValid(trace.Entity) and
-                (trace.Entity:GetClass() == "prop_physics" or trace.Entity:GetClass() == "prop_ragdoll") then
+                (trace.Entity:GetClass() == "prop_physics" or
+                    (trace.Entity:GetClass() == "prop_ragdoll" and EnableTrippingOverRagdolls:GetBool())) then
                 if math.random() > TripChance:GetFloat() then continue end
 
                 local weapon = ent:GetActiveWeapon()
@@ -210,7 +216,6 @@ hook.Add("Think", "NPCTripping_Check", function()
         end
 
         if not IsValid(data.weapon) then -- object vanished
-            npc:ClearSchedule()          -- avoid chasing anymore
             scavengingNPCs[npc] = nil    -- remove
             continue
         end
