@@ -155,7 +155,6 @@ hook.Add("Think", "NPCTripping_Check", function()
         end
     end
 
-    -- Process standing up
     for ragdoll, data in pairs(trippedNPCs) do
         if not IsValid(ragdoll) then
             trippedNPCs[ragdoll] = nil
