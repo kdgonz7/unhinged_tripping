@@ -12,6 +12,8 @@ local TripChance = CreateConVar("npc_trip_chance", "1.0", { FCVAR_ARCHIVE, FCVAR
 local TripWeaponDropChance = CreateConVar("npc_trip_weapon_drop_chance", "0.5",
     { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
     "Chance (0-1) for an NPC to drop their weapon when they trip")
+local ScavengeRange = CreateConVar("npc_trip_scavenge_range", "45", { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
+    "Distance threshold for Combine to play the pickup animation")
 
 local function CreateRagdollFromNPC(npc, dropWeapon)
     if not IsValid(npc) then return end
@@ -45,7 +47,6 @@ local function CreateRagdollFromNPC(npc, dropWeapon)
 
     rag:SetCollisionGroup(COLLISION_GROUP_PASSABLE_DOOR)
 
-    -- drop wep seq
     if dropWeapon and IsValid(npc:GetActiveWeapon()) then
         local weapon = npc:GetActiveWeapon()
         local weaponPos = weapon:GetPos()
@@ -72,11 +73,11 @@ local function CreateRagdollFromNPC(npc, dropWeapon)
     end
 
     npc:Remove()
-
     return rag
 end
 
 local trippedNPCs = {}
+local scavengingNPCs = {} -- Holds Combine tracking down their dropped weapons
 local nextCheck = 0
 
 hook.Add("Think", "NPCTripping_Check", function()
@@ -91,7 +92,6 @@ hook.Add("Think", "NPCTripping_Check", function()
             if not IsValid(ent) or ent:Health() <= 0 then continue end
             if not TripNextbots:GetBool() and ent:IsNextBot() then continue end
             if not ent:IsNPC() and not ent:IsNextBot() then continue end
-
             if ent.NPC_TripCooldown and currentTime < ent.NPC_TripCooldown then continue end
 
             local pos = ent:GetPos()
@@ -151,6 +151,7 @@ hook.Add("Think", "NPCTripping_Check", function()
         end
     end
 
+    -- Process standing up
     for ragdoll, data in pairs(trippedNPCs) do
         if not IsValid(ragdoll) then
             trippedNPCs[ragdoll] = nil
@@ -159,7 +160,6 @@ hook.Add("Think", "NPCTripping_Check", function()
 
         if currentTime - data.trippedTime >= TripTimeThreshold:GetFloat() then
             local newNPC = ents.Create(data.oldClass)
-
             if not IsValid(newNPC) then
                 trippedNPCs[ragdoll] = nil
                 ragdoll:Remove()
@@ -176,29 +176,23 @@ hook.Add("Think", "NPCTripping_Check", function()
             newNPC:SetHealth(data.TripHealth)
             newNPC.NPC_TripCooldown = currentTime + TripCooldown:GetFloat()
 
-            -- run for gun
-            if newNPC.SetLastPosition and IsValid(ragdoll.NPC_DroppedWeapon) then
-                print("Setting run for gun", ragdoll.NPC_DroppedWeapon:GetPos())
-
-                local pos = ragdoll.NPC_DroppedWeapon:GetPos()
-                timer.Simple(0.5, function()
-                    newNPC:SetLastPosition(pos)
-                    newNPC:SetSchedule(SCHED_FORCED_GO_RUN)
-                end)
-            end
-
             for i = 0, ragdoll:GetNumBodyGroups() - 1 do
                 newNPC:SetBodygroup(i, ragdoll:GetBodygroup(i))
             end
 
-            if IsValid(data.oldWeapon) then
+            local isCombine = string.find(data.oldClass, "npc_combine") or string.find(data.oldClass, "npc_metropolice")
+            if isCombine and IsValid(data.droppedWeapon) and data.oldWeapon then
+                scavengingNPCs[newNPC] = {
+                    weapon = data.droppedWeapon,
+                    wepClass = data.oldWeapon,
+                    started = false
+                }
+            elseif data.oldWeapon then
                 timer.Simple(0.1, function()
                     if IsValid(newNPC) then
                         newNPC:Give(data.oldWeapon)
                         timer.Simple(0.05, function()
-                            if IsValid(newNPC) then
-                                newNPC:SelectWeapon(data.oldWeapon)
-                            end
+                            if IsValid(newNPC) then newNPC:SelectWeapon(data.oldWeapon) end
                         end)
                     end
                 end)
@@ -206,6 +200,61 @@ hook.Add("Think", "NPCTripping_Check", function()
 
             trippedNPCs[ragdoll] = nil
             ragdoll:Remove()
+        end
+    end
+
+    for npc, data in pairs(scavengingNPCs) do
+        if not IsValid(npc) or npc:Health() <= 0 then
+            scavengingNPCs[npc] = nil
+            continue
+        end
+
+        if not IsValid(data.weapon) then -- object vanished
+            npc:ClearSchedule()          -- avoid chasing anymore
+            scavengingNPCs[npc] = nil    -- remove
+            continue
+        end
+
+        local dist = npc:GetPos():DistToSqr(data.weapon:GetPos())
+        local rangeThresh = ScavengeRange:GetFloat() * ScavengeRange:GetFloat()
+
+        if dist <= rangeThresh then
+            scavengingNPCs[npc] = nil -- Handled
+            npc:ClearSchedule()
+
+            npc:SetCondition(COND.IDLE_INTERRUPT)
+
+            local seq = npc:LookupSequence("pickup")
+            if seq == -1 then seq = npc:LookupSequence("yield") end
+            if seq == -1 then seq = npc:LookupSequence("gesture_item_pickup") end
+            if seq == -1 then seq = npc:LookupSequence("combat_stand_to_crouch") end
+
+            if seq ~= -1 then
+                npc:RestartGesture(seq)
+            end
+
+            timer.Simple(0.6, function()
+                if not IsValid(npc) or npc:Health() <= 0 then return end
+                if IsValid(data.weapon) then data.weapon:Remove() end
+
+                npc:Give(data.wepClass)
+                timer.Simple(0.05, function()
+                    if IsValid(npc) then
+                        npc:SelectWeapon(data.wepClass)
+                        npc:ClearCondition(COND.IDLE_INTERRUPT)
+                    end
+                end)
+            end)
+        else
+            if not data.started or (npc:GetInternalVariable("m_backtracking") == false and math.random() < 0.1) then
+                print("Time to go to", data.weapon:GetPos())
+
+                timer.Simple(0.5, function()
+                    npc:SetLastPosition(data.weapon:GetPos())
+                    npc:SetSchedule(SCHED_FORCED_GO_RUN)
+                    data.started = true
+                end)
+            end
         end
     end
 end)
