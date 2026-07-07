@@ -8,6 +8,7 @@ local TripRaycastLength = CreateConVar("npc_trip_ray_length", "50", { FCVAR_ARCH
 local TripCooldown = CreateConVar("npc_trip_cooldown", "3", { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
     "Seconds before an NPC can trip again")
 local TripNextbots = CreateConVar("npc_trip_nextbots", "0", { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY })
+local TripChance = CreateConVar("npc_trip_chance", "1.0", { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY })
 
 local function CreateRagdollFromNPC(npc)
     if not IsValid(npc) then return end
@@ -81,6 +82,8 @@ hook.Add("Think", "NPCTripping_Check", function()
 
             if trace.Hit and IsValid(trace.Entity) and
                 (trace.Entity:GetClass() == "prop_physics" or trace.Entity:GetClass() == "prop_ragdoll") then
+                if math.random() > TripChance:GetFloat() then return end
+
                 local weapon = ent:GetActiveWeapon()
                 local weaponClass = IsValid(weapon) and weapon:GetClass() or nil
                 local npcClass = ent:GetClass()
