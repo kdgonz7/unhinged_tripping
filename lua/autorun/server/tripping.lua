@@ -14,8 +14,6 @@ local TripWeaponDropChance = CreateConVar("npc_trip_weapon_drop_chance", "0.5",
     "Chance (0-1) for an NPC to drop their weapon when they trip")
 local ScavengeRange = CreateConVar("npc_trip_scavenge_range", "45", { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
     "Distance threshold for Combine to play the pickup animation")
-
--- New ConVar to control if NPCs trip over ragdolls
 local EnableTrippingOverRagdolls = CreateConVar("npc_trip_over_ragdolls", "1",
     { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
     "Enables or disables NPC choreography, including tripping over ragdolls and other behaviors.")

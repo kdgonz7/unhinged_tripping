@@ -1,5 +1,5 @@
 if CLIENT then
-     hook.Add("AddToolMenuTabs", "CreateTrippingTab", function()
+    hook.Add("AddToolMenuTabs", "CreateTrippingTab", function()
         spawnmenu.AddToolCategory("Utilities", "NPC Tripping System", "NPC Tripping System")
     end)
 
@@ -49,6 +49,12 @@ if CLIENT then
                 panel:CheckBox(
                     "Allow Nextbots to Trip",
                     "npc_trip_nextbots"
+                )
+                --npc_trip_over_ragdolls
+                panel:ControlHelp("")
+                panel:CheckBox(
+                    "NPCs Trip Over Ragdolls",
+                    "npc_trip_over_ragdolls"
                 )
             end
         )
