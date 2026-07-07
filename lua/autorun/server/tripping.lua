@@ -9,8 +9,11 @@ local TripCooldown = CreateConVar("npc_trip_cooldown", "3", { FCVAR_ARCHIVE, FCV
     "Seconds before an NPC can trip again")
 local TripNextbots = CreateConVar("npc_trip_nextbots", "0", { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY })
 local TripChance = CreateConVar("npc_trip_chance", "1.0", { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY })
+local TripWeaponDropChance = CreateConVar("npc_trip_weapon_drop_chance", "0.5",
+    { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
+    "Chance (0-1) for an NPC to drop their weapon when they trip")
 
-local function CreateRagdollFromNPC(npc)
+local function CreateRagdollFromNPC(npc, dropWeapon)
     if not IsValid(npc) then return end
 
     local rag = ents.Create("prop_ragdoll")
@@ -42,9 +45,32 @@ local function CreateRagdollFromNPC(npc)
 
     rag:SetCollisionGroup(COLLISION_GROUP_PASSABLE_DOOR)
 
-    if IsValid(npc:GetActiveWeapon()) then
-        npc:GetActiveWeapon():Remove()
+    -- drop wep seq
+    if dropWeapon and IsValid(npc:GetActiveWeapon()) then
+        local weapon = npc:GetActiveWeapon()
+        local weaponPos = weapon:GetPos()
+        local weaponAng = weapon:GetAngles()
+
+        local droppedWeapon = ents.Create(weapon:GetClass())
+        if IsValid(droppedWeapon) then
+            droppedWeapon:SetPos(weaponPos + Vector(0, 0, 5))
+            droppedWeapon:SetAngles(weaponAng)
+            droppedWeapon:Spawn()
+            droppedWeapon:Activate()
+
+            local phys = droppedWeapon:GetPhysicsObject()
+            if IsValid(phys) then
+                phys:Wake()
+                phys:SetVelocity(npc:GetForward() * 100 + Vector(0, 0, 50))
+                phys:AddAngleVelocity(Vector(200, 100, 50))
+            end
+
+            rag.NPC_DroppedWeapon = droppedWeapon
+        end
+
+        weapon:Remove()
     end
+
     npc:Remove()
 
     return rag
@@ -89,6 +115,8 @@ hook.Add("Think", "NPCTripping_Check", function()
                 local npcClass = ent:GetClass()
                 local oldModel = ent:GetModel()
 
+                local dropWeapon = weaponClass ~= nil and math.random() <= TripWeaponDropChance:GetFloat()
+
                 local npcVelocity = ent:GetVelocity()
                 local forwardForce = forward * (math.max(npcVelocity:Length(), 150) * 1.5)
                 local upwardForce = Vector(0, 0, 80)
@@ -97,7 +125,7 @@ hook.Add("Think", "NPCTripping_Check", function()
                 local health = ent:Health()
                 local maxHealth = ent:GetMaxHealth()
 
-                local ragdoll = CreateRagdollFromNPC(ent)
+                local ragdoll = CreateRagdollFromNPC(ent, dropWeapon)
                 if not IsValid(ragdoll) then continue end
 
                 for i = 0, ragdoll:GetPhysicsObjectCount() - 1 do
@@ -116,7 +144,8 @@ hook.Add("Think", "NPCTripping_Check", function()
                     oldWeapon = weaponClass,
                     oldModel = oldModel,
                     TripHealth = health,
-                    TripMaxHealth = maxHealth
+                    TripMaxHealth = maxHealth,
+                    droppedWeapon = dropWeapon and ragdoll.NPC_DroppedWeapon or nil
                 }
             end
         end
@@ -147,11 +176,22 @@ hook.Add("Think", "NPCTripping_Check", function()
             newNPC:SetHealth(data.TripHealth)
             newNPC.NPC_TripCooldown = currentTime + TripCooldown:GetFloat()
 
+            -- run for gun
+            if newNPC.SetLastPosition and IsValid(ragdoll.NPC_DroppedWeapon) then
+                print("Setting run for gun", ragdoll.NPC_DroppedWeapon:GetPos())
+
+                local pos = ragdoll.NPC_DroppedWeapon:GetPos()
+                timer.Simple(0.5, function()
+                    newNPC:SetLastPosition(pos)
+                    newNPC:SetSchedule(SCHED_FORCED_GO_RUN)
+                end)
+            end
+
             for i = 0, ragdoll:GetNumBodyGroups() - 1 do
                 newNPC:SetBodygroup(i, ragdoll:GetBodygroup(i))
             end
 
-            if data.oldWeapon then
+            if IsValid(data.oldWeapon) then
                 timer.Simple(0.1, function()
                     if IsValid(newNPC) then
                         newNPC:Give(data.oldWeapon)
