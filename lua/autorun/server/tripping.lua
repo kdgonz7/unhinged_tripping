@@ -50,6 +50,17 @@ local function CreateRagdollFromNPC(npc, dropWeapon)
 
     rag:SetCollisionGroup(COLLISION_GROUP_PASSABLE_DOOR)
 
+    --*FIX* for undos
+    if SERVER then
+        undo.ReplaceEntity(npc, rag)
+        cleanup.ReplaceEntity(npc, rag)
+
+        local creator = npc:GetCreator()
+        if IsValid(creator) then
+            rag:SetCreator(creator)
+        end
+    end
+
     if dropWeapon and IsValid(npc:GetActiveWeapon()) then
         local weapon = npc:GetActiveWeapon()
         local weaponPos = weapon:GetPos()
@@ -73,9 +84,19 @@ local function CreateRagdollFromNPC(npc, dropWeapon)
         end
 
         weapon:Remove()
+    else
+        -- hide their weapons so it doesn't float in mid-air
+        local weapon = npc:GetActiveWeapon()
+        if IsValid(weapon) then
+            weapon:SetNoDraw(true)
+        end
     end
 
-    npc:Remove()
+    npc:SetNoDraw(true)
+    npc:SetNotSolid(true)
+    npc:SetMoveType(MOVETYPE_NONE)
+    if npc.CapabilitiesClear then npc:CapabilitiesClear() end
+
     return rag
 end
 
@@ -93,6 +114,7 @@ hook.Add("Think", "NPCTripping_Check", function()
 
         for _, ent in ents.Iterator() do
             if not IsValid(ent) or ent:Health() <= 0 then continue end
+            if ent.NPC_IsTrippedGhost then continue end
             if not TripNextbots:GetBool() and ent:IsNextBot() then continue end
             if not ent:IsNPC() and not ent:IsNextBot() then continue end
             if ent.NPC_TripCooldown and currentTime < ent.NPC_TripCooldown then continue end
@@ -116,8 +138,6 @@ hook.Add("Think", "NPCTripping_Check", function()
 
                 local weapon = ent:GetActiveWeapon()
                 local weaponClass = IsValid(weapon) and weapon:GetClass() or nil
-                local npcClass = ent:GetClass()
-                local oldModel = ent:GetModel()
 
                 local dropWeapon = weaponClass ~= nil and math.random() <= TripWeaponDropChance:GetFloat()
 
@@ -126,11 +146,13 @@ hook.Add("Think", "NPCTripping_Check", function()
                 local upwardForce = Vector(0, 0, 80)
                 local totalVelocity = npcVelocity + forwardForce + upwardForce
 
-                local health = ent:Health()
-                local maxHealth = ent:GetMaxHealth()
+                ent.NPC_IsTrippedGhost = true
 
                 local ragdoll = CreateRagdollFromNPC(ent, dropWeapon)
-                if not IsValid(ragdoll) then continue end
+                if not IsValid(ragdoll) then
+                    ent.NPC_IsTrippedGhost = nil
+                    continue
+                end
 
                 for i = 0, ragdoll:GetPhysicsObjectCount() - 1 do
                     local phys = ragdoll:GetPhysicsObjectNum(i)
@@ -144,11 +166,8 @@ hook.Add("Think", "NPCTripping_Check", function()
 
                 trippedNPCs[ragdoll] = {
                     trippedTime = currentTime,
-                    oldClass = npcClass,
+                    npcEnt = ent,
                     oldWeapon = weaponClass,
-                    oldModel = oldModel,
-                    TripHealth = health,
-                    TripMaxHealth = maxHealth,
                     droppedWeapon = dropWeapon and ragdoll.NPC_DroppedWeapon or nil
                 }
             end
@@ -157,45 +176,76 @@ hook.Add("Think", "NPCTripping_Check", function()
 
     for ragdoll, data in pairs(trippedNPCs) do
         if not IsValid(ragdoll) then
+            if IsValid(data.npcEnt) then data.npcEnt:Remove() end
             trippedNPCs[ragdoll] = nil
             continue
         end
 
+        local originalNPC = data.npcEnt
+        if not IsValid(originalNPC) then
+            ragdoll:Remove()
+            trippedNPCs[ragdoll] = nil
+            continue
+        end
+
+        local pelvisBone = ragdoll:LookupBone("ValveBiped.Bip01_Pelvis")
+        if pelvisBone then
+            local pPos = ragdoll:GetBonePosition(pelvisBone)
+            if pPos then originalNPC:SetPos(pPos) end
+        else
+            originalNPC:SetPos(ragdoll:GetPos())
+        end
+
         if currentTime - data.trippedTime >= TripTimeThreshold:GetFloat() then
-            local newNPC = ents.Create(data.oldClass)
-            if not IsValid(newNPC) then
-                trippedNPCs[ragdoll] = nil
-                ragdoll:Remove()
-                continue
+            -- kill ragdoll physics velocities and collisions before restoring NPC physics
+            -- god. hope this fixes that problem with throwing themselves when they respawn lol
+            ragdoll:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
+            for i = 0, ragdoll:GetPhysicsObjectCount() - 1 do
+                local phys = ragdoll:GetPhysicsObjectNum(i)
+                if IsValid(phys) then
+                    phys:SetVelocity(Vector(0, 0, 0))
+                    phys:AddAngleVelocity(Vector(0, 0, 0))
+                    phys:Sleep()
+                end
             end
 
-            newNPC:SetPos(ragdoll:GetPos() + Vector(0, 0, 10))
-            newNPC:SetAngles(ragdoll:GetAngles())
-            newNPC:Spawn()
+            originalNPC:SetPos(ragdoll:GetPos() + Vector(0, 0, 15))
+            originalNPC:SetAngles(Angle(0, ragdoll:GetAngles().y, 0))
+            originalNPC:SetNoDraw(false)
+            originalNPC:SetNotSolid(false)
+            originalNPC:SetMoveType(MOVETYPE_STEP)
 
-            newNPC:SetModel(data.oldModel)
-            newNPC:SetSkin(ragdoll:GetSkin())
-            newNPC:SetMaxHealth(data.TripMaxHealth)
-            newNPC:SetHealth(data.TripHealth)
-            newNPC.NPC_TripCooldown = currentTime + TripCooldown:GetFloat()
-
-            for i = 0, ragdoll:GetNumBodyGroups() - 1 do
-                newNPC:SetBodygroup(i, ragdoll:GetBodygroup(i))
+            local weapon = originalNPC:GetActiveWeapon()
+            if IsValid(weapon) then
+                weapon:SetNoDraw(false)
             end
 
-            local isCombine = string.find(data.oldClass, "npc_combine") or string.find(data.oldClass, "npc_metropolice")
+            if originalNPC.CapabilitiesAdd then
+                originalNPC:CapabilitiesAdd(CAP_MOVE_GROUND + CAP_OPEN_DOORS + CAP_TURN_HEAD)
+            end
+
+            originalNPC.NPC_TripCooldown = currentTime + TripCooldown:GetFloat()
+            originalNPC.NPC_IsTrippedGhost = nil
+
+            if SERVER and IsValid(originalNPC:GetCreator()) then
+                undo.ReplaceEntity(ragdoll, originalNPC)
+                cleanup.ReplaceEntity(ragdoll, originalNPC)
+            end
+
+            local isCombine = string.find(originalNPC:GetClass(), "npc_combine") or
+                string.find(originalNPC:GetClass(), "npc_metropolice")
             if isCombine and IsValid(data.droppedWeapon) and data.oldWeapon then
-                scavengingNPCs[newNPC] = {
+                scavengingNPCs[originalNPC] = {
                     weapon = data.droppedWeapon,
                     wepClass = data.oldWeapon,
                     started = false
                 }
-            elseif data.oldWeapon then
+            elseif data.oldWeapon and not IsValid(originalNPC:GetActiveWeapon()) then
                 timer.Simple(0.1, function()
-                    if IsValid(newNPC) then
-                        newNPC:Give(data.oldWeapon)
+                    if IsValid(originalNPC) then
+                        originalNPC:Give(data.oldWeapon)
                         timer.Simple(0.05, function()
-                            if IsValid(newNPC) then newNPC:SelectWeapon(data.oldWeapon) end
+                            if IsValid(originalNPC) then originalNPC:SelectWeapon(data.oldWeapon) end
                         end)
                     end
                 end)
@@ -212,8 +262,8 @@ hook.Add("Think", "NPCTripping_Check", function()
             continue
         end
 
-        if not IsValid(data.weapon) then -- object vanished
-            scavengingNPCs[npc] = nil    -- remove
+        if not IsValid(data.weapon) then
+            scavengingNPCs[npc] = nil
             continue
         end
 
@@ -221,9 +271,8 @@ hook.Add("Think", "NPCTripping_Check", function()
         local rangeThresh = ScavengeRange:GetFloat() * ScavengeRange:GetFloat()
 
         if dist <= rangeThresh then
-            scavengingNPCs[npc] = nil -- Handled
+            scavengingNPCs[npc] = nil
             npc:ClearSchedule()
-
             npc:SetCondition(COND.IDLE_INTERRUPT)
 
             local seq = npc:LookupSequence("pickup")
@@ -231,9 +280,7 @@ hook.Add("Think", "NPCTripping_Check", function()
             if seq == -1 then seq = npc:LookupSequence("gesture_item_pickup") end
             if seq == -1 then seq = npc:LookupSequence("combat_stand_to_crouch") end
 
-            if seq ~= -1 then
-                npc:RestartGesture(seq)
-            end
+            if seq ~= -1 then npc:RestartGesture(seq) end
 
             timer.Simple(0.6, function()
                 if not IsValid(npc) or npc:Health() <= 0 then return end
@@ -250,9 +297,11 @@ hook.Add("Think", "NPCTripping_Check", function()
         else
             if not data.started or (npc:GetInternalVariable("m_backtracking") == false and math.random() < 0.1) then
                 timer.Simple(0.5, function()
-                    npc:SetLastPosition(data.weapon:GetPos())
-                    npc:SetSchedule(SCHED_FORCED_GO_RUN)
-                    data.started = true
+                    if IsValid(npc) and IsValid(data.weapon) then
+                        npc:SetLastPosition(data.weapon:GetPos())
+                        npc:SetSchedule(SCHED_FORCED_GO_RUN)
+                        data.started = true
+                    end
                 end)
             end
         end
@@ -263,10 +312,10 @@ concommand.Add("npc_trip_list", function()
     if not TripEnabled:GetBool() then return end
     print("=== Tripped NPCs ===")
     for ragdoll, data in pairs(trippedNPCs) do
-        if IsValid(ragdoll) then
+        if IsValid(ragdoll) and IsValid(data.npcEnt) then
             local timeLeft = (data.trippedTime + TripTimeThreshold:GetFloat() - CurTime())
             print(string.format("Ragdoll %s - Class: %s, Gets up in %.1fs",
-                ragdoll:EntIndex(), data.oldClass, timeLeft))
+                ragdoll:EntIndex(), data.npcEnt:GetClass(), timeLeft))
         end
     end
     if table.Count(trippedNPCs) == 0 then
@@ -278,19 +327,19 @@ hook.Add("EntityTakeDamage", "CheckAndKill", function(target, dmg)
     if not TripEnabled:GetBool() then return end
     if not IsValid(target) or not target:IsRagdoll() then return end
 
-    if not (dmg:IsDamageType(DMG_BULLET) or
-            dmg:IsDamageType(DMG_SLASH) or
-            dmg:IsDamageType(DMG_BUCKSHOT) or
-            dmg:IsDamageType(DMG_VEHICLE) or
-            dmg:IsDamageType(DMG_CRUSH)) then
-        return
+    --- @cast dmg CTakeDamageInfo
+    if dmg:IsDamageType(DMG_CRUSH) then
+        dmg:SetDamage(dmg:GetDamage() * 0.6) -- 0.6 multiplier to crush damage. TODO: option
     end
 
     local data = trippedNPCs[target]
-    if data then
-        data.TripHealth = data.TripHealth - dmg:GetDamage()
-        if data.TripHealth <= 0 then
+    if data and IsValid(data.npcEnt) then
+        data.npcEnt:TakeDamageInfo(dmg)
+
+        if data.npcEnt:Health() <= 0 then
             trippedNPCs[target] = nil
+            -- Allow the ragdoll to become a normal corpse instead of vanishing
+            target:SetCollisionGroup(COLLISION_GROUP_NONE)
         end
     end
 end)
