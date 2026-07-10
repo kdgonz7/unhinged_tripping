@@ -17,6 +17,86 @@ local ScavengeRange = CreateConVar("npc_trip_scavenge_range", "45", { FCVAR_ARCH
 local EnableTrippingOverRagdolls = CreateConVar("npc_trip_over_ragdolls", "1",
     { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
     "Enables or disables NPC choreography, including tripping over ragdolls and other behaviors.")
+local TripLegCheck = CreateConVar("npc_trip_legcheck", "1", { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
+    "Check if NPC has leg bones before allowing trip")
+local TripForceThreshold = CreateConVar("npc_trip_force_threshold", "50",
+    { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
+    "Minimum velocity required for forced trip (prevents walking into NPCs)")
+local ScannersCanTrip = CreateConVar("npc_trip_scanners", "0",
+    { FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_NOTIFY },
+    "Should NPC Scanners be able to trip?")
+
+TripBlacklist = {}
+local TripBlacklistFile = "npc_trip_blacklist.txt"
+
+function LoadTripBlacklist()
+    if not file.Exists(TripBlacklistFile, "DATA") then
+        TripBlacklist = {}
+        return
+    end
+
+    local data = file.Read(TripBlacklistFile, "DATA")
+    if data and data ~= "" then
+        TripBlacklist = util.JSONToTable(data) or {}
+    end
+end
+
+function SaveTripBlacklist()
+    file.Write(TripBlacklistFile, util.TableToJSON(TripBlacklist))
+end
+
+LoadTripBlacklist()
+
+-- Helper: Check if NPC has legs for trip purposes
+local function NPCHasLegs(entity)
+    if not TripLegCheck:GetBool() then return true end
+
+    if entity:GetClass() == "npc_zombie_torso" or
+        entity:GetClass() == "npc_fast_zombie_torso" then
+        return false
+    end
+
+    local legBones = {
+        "ValveBiped.Bip01_L_Foot",
+        "ValveBiped.Bip01_R_Foot",
+        "ValveBiped.Bip01_L_Thigh",
+        "ValveBiped.Bip01_R_Thigh"
+    }
+
+    for _, boneName in ipairs(legBones) do
+        if entity:LookupBone(boneName) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function IsTrippingBlacklisted(entity)
+    if not IsValid(entity) then return true end
+
+    local class = entity:GetClass()
+    local model = entity:GetModel()
+
+    -- Check by class
+    if TripBlacklist[class] then return true end
+
+    -- Check by model
+    if model and TripBlacklist[model] then return true end
+
+    return false
+end
+
+local function IsScannerNPC(entity)
+    local class = entity:GetClass()
+    return class == "npc_combinegunship" or
+        class == "npc_helicopter" or
+        class == "npc_cscanner" or
+        class == "npc_clawscanner" or
+        class == "npc_manhack" or
+        class == "npc_turret_floor" or
+        class == "npc_turret_ceiling"
+end
 
 local function CreateRagdollFromNPC(npc, dropWeapon)
     if not IsValid(npc) then return end
@@ -127,6 +207,19 @@ hook.Add("Think", "NPCTripping_Check", function()
             if not ent:IsNPC() and not ent:IsNextBot() then continue end
             if ent.NPC_TripCooldown and currentTime < ent.NPC_TripCooldown then continue end
 
+            -- *FIX: Check if NPC has legs
+            if not NPCHasLegs(ent) then continue end
+
+            -- *FIX: Check blacklist and scanner types
+            if IsTrippingBlacklisted(ent) then continue end
+
+            -- *FIX Prevent forced tripping with small objects
+            local vel = ent:GetVelocity()
+            local velLength = vel:Length()
+
+            if IsScannerNPC(ent) and not ScannersCanTrip:GetBool() then continue end
+            if velLength < TripForceThreshold:GetFloat() then continue end
+
             local pos = ent:GetPos()
             local forward = ent:GetForward()
             local startPos = pos + Vector(0, 0, 10)
@@ -139,14 +232,29 @@ hook.Add("Think", "NPCTripping_Check", function()
                 mask = MASK_SHOT
             })
 
-            if trace.Hit and IsValid(trace.Entity) and
-                (trace.Entity:GetClass() == "prop_physics" or
-                    (trace.Entity:GetClass() == "prop_ragdoll" and EnableTrippingOverRagdolls:GetBool())) then
+            if trace.Hit and IsValid(trace.Entity) then
+                local hitClass = trace.Entity:GetClass()
+                local allowedToTrip = false
+
+                if hitClass == "prop_physics" then
+                    local phys = trace.Entity:GetPhysicsObject()
+                    if IsValid(phys) then
+                        local mass = phys:GetMass()
+                        local volume = phys:GetVolume()
+                        if mass >= 5 and volume >= 1000 then
+                            allowedToTrip = true
+                        end
+                    end
+                elseif hitClass == "prop_ragdoll" and EnableTrippingOverRagdolls:GetBool() then
+                    allowedToTrip = true
+                end
+
+                if not allowedToTrip then continue end
+
                 if math.random() > TripChance:GetFloat() then continue end
 
                 local weapon = ent:GetActiveWeapon()
                 local weaponClass = IsValid(weapon) and weapon:GetClass() or nil
-
                 local dropWeapon = weaponClass ~= nil and math.random() <= TripWeaponDropChance:GetFloat()
 
                 local npcVelocity = ent:GetVelocity()

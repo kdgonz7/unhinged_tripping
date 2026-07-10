@@ -45,11 +45,30 @@ if CLIENT then
                     1.0,
                     2
                 )
+                panel:NumSlider(
+                    "Trip Velocity Threshold",
+                    "npc_trip_force_threshold",
+                    0,
+                    500,
+                    2
+                )
+                panel:ControlHelp("How fast (units) does an NPC have to be going to trigger a trip")
+
+                panel:ControlHelp("")
+                panel:CheckBox("Check for NPC legs?", "npc_trip_legcheck")
+                panel:ControlHelp("Should the system check for legs before trying to trip an NPC?")
+
+                --npc_trip_scanners
+                panel:ControlHelp("")
+                panel:CheckBox("Can scanners trip?", "npc_trip_scanners")
+                panel:ControlHelp("Can scanner objects trip (warning: may be better to leave this off)")
+
                 panel:ControlHelp("")
                 panel:CheckBox(
                     "Allow Nextbots to Trip",
                     "npc_trip_nextbots"
                 )
+
                 --npc_trip_over_ragdolls
                 panel:ControlHelp("")
                 panel:CheckBox(
