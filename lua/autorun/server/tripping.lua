@@ -308,38 +308,29 @@ hook.Add("Think", "NPCTripping_Check", function()
     end
 end)
 
-concommand.Add("npc_trip_list", function()
-    if not TripEnabled:GetBool() then return end
-    print("=== Tripped NPCs ===")
-    for ragdoll, data in pairs(trippedNPCs) do
-        if IsValid(ragdoll) and IsValid(data.npcEnt) then
-            local timeLeft = (data.trippedTime + TripTimeThreshold:GetFloat() - CurTime())
-            print(string.format("Ragdoll %s - Class: %s, Gets up in %.1fs",
-                ragdoll:EntIndex(), data.npcEnt:GetClass(), timeLeft))
-        end
-    end
-    if table.Count(trippedNPCs) == 0 then
-        print("No NPCs are currently tripped")
-    end
-end)
-
 hook.Add("EntityTakeDamage", "CheckAndKill", function(target, dmg)
     if not TripEnabled:GetBool() then return end
     if not IsValid(target) or not target:IsRagdoll() then return end
 
-    --- @cast dmg CTakeDamageInfo
     if dmg:IsDamageType(DMG_CRUSH) then
-        dmg:SetDamage(dmg:GetDamage() * 0.6) -- 0.6 multiplier to crush damage. TODO: option
+        dmg:SetDamage(dmg:GetDamage() * 0.2)
     end
 
     local data = trippedNPCs[target]
     if data and IsValid(data.npcEnt) then
-        data.npcEnt:TakeDamageInfo(dmg)
+        local npc = data.npcEnt
+        local newHealth = npc:Health() - dmg:GetDamage()
+        npc:SetHealth(newHealth)
 
-        if data.npcEnt:Health() <= 0 then
+        if newHealth <= 0 then
             trippedNPCs[target] = nil
-            -- Allow the ragdoll to become a normal corpse instead of vanishing
             target:SetCollisionGroup(COLLISION_GROUP_NONE)
+            ---@cast npc NPC
+            timer.Simple(0, function()
+                if IsValid(npc) then
+                    npc:Remove()
+                end
+            end)
         end
     end
 end)
