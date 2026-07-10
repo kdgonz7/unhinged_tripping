@@ -97,6 +97,14 @@ local function CreateRagdollFromNPC(npc, dropWeapon)
     npc:SetMoveType(MOVETYPE_NONE)
     if npc.CapabilitiesClear then npc:CapabilitiesClear() end
 
+    -- *FIX*: Completely freeze engine AI and Lua/Nextbot thinking loops
+    if npc.GetNPCState then
+        npc.PreTripNPCState = npc:GetNPCState()
+        npc:SetNPCState(NPC_STATE_NONE)
+    end
+
+    npc:NextThink(CurTime() + 99999)
+
     return rag
 end
 
@@ -198,7 +206,6 @@ hook.Add("Think", "NPCTripping_Check", function()
 
         if currentTime - data.trippedTime >= TripTimeThreshold:GetFloat() then
             -- kill ragdoll physics velocities and collisions before restoring NPC physics
-            -- god. hope this fixes that problem with throwing themselves when they respawn lol
             ragdoll:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
             for i = 0, ragdoll:GetPhysicsObjectCount() - 1 do
                 local phys = ragdoll:GetPhysicsObjectNum(i)
@@ -212,8 +219,15 @@ hook.Add("Think", "NPCTripping_Check", function()
             originalNPC:SetPos(ragdoll:GetPos() + Vector(0, 0, 15))
             originalNPC:SetAngles(Angle(0, ragdoll:GetAngles().y, 0))
             originalNPC:SetNoDraw(false)
-            originalNPC:SetNotSolid(false)
+            originalNPC:SetNotSolid(true)
             originalNPC:SetMoveType(MOVETYPE_STEP)
+
+            -- *FIX*: Wake the AI back up and restore its old engine state
+            originalNPC:NextThink(CurTime())
+            if originalNPC.SetNPCState and originalNPC.PreTripNPCState then
+                originalNPC:SetNPCState(originalNPC.PreTripNPCState)
+                originalNPC.PreTripNPCState = nil
+            end
 
             local weapon = originalNPC:GetActiveWeapon()
             if IsValid(weapon) then
@@ -253,6 +267,7 @@ hook.Add("Think", "NPCTripping_Check", function()
 
             trippedNPCs[ragdoll] = nil
             ragdoll:Remove()
+            originalNPC:SetNotSolid(false)
         end
     end
 
