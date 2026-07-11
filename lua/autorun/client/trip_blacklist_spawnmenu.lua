@@ -1,9 +1,11 @@
 -- NPC Trip Blacklist Manager - Spawnmenu Entry
 -- Only accessible to server admins
 
-if not LocalPlayer():IsAdmin() then return end
+
 
 local function CreateTripBlacklistMenu()
+    if not LocalPlayer():IsAdmin() then return end
+
     local frame = vgui.Create("DFrame")
     frame:SetTitle("NPC Trip Blacklist Manager")
     frame:SetSize(500, 600)
