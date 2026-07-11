@@ -47,8 +47,22 @@ end
 
 LoadTripBlacklist()
 
+local function IsScannerNPC(entity)
+    local class = entity:GetClass()
+    return class == "npc_combinegunship" or
+        class == "npc_helicopter" or
+        class == "npc_cscanner" or
+        class == "npc_clawscanner" or
+        class == "npc_manhack" or
+        class == "npc_turret_floor" or
+        class == "npc_turret_ceiling"
+end
+
 -- Helper: Check if NPC has legs for trip purposes
 local function NPCHasLegs(entity)
+    -- *FIX*: Make sure we bypass leg checks if it's an allowed scanner
+    if ScannersCanTrip:GetBool() and IsScannerNPC(entity) then return true end
+
     if not TripLegCheck:GetBool() then return true end
 
     if entity:GetClass() == "npc_zombie_torso" or
@@ -87,17 +101,6 @@ local function IsTrippingBlacklisted(entity)
     return false
 end
 
-local function IsScannerNPC(entity)
-    local class = entity:GetClass()
-    return class == "npc_combinegunship" or
-        class == "npc_helicopter" or
-        class == "npc_cscanner" or
-        class == "npc_clawscanner" or
-        class == "npc_manhack" or
-        class == "npc_turret_floor" or
-        class == "npc_turret_ceiling"
-end
-
 local function CreateRagdollFromNPC(npc, dropWeapon)
     if not IsValid(npc) then return end
 
@@ -130,7 +133,6 @@ local function CreateRagdollFromNPC(npc, dropWeapon)
 
     rag:SetCollisionGroup(COLLISION_GROUP_PASSABLE_DOOR)
 
-    --*FIX* for undos
     if SERVER then
         undo.ReplaceEntity(npc, rag)
         cleanup.ReplaceEntity(npc, rag)
@@ -165,7 +167,6 @@ local function CreateRagdollFromNPC(npc, dropWeapon)
 
         weapon:Remove()
     else
-        -- hide their weapons so it doesn't float in mid-air
         local weapon = npc:GetActiveWeapon()
         if IsValid(weapon) then
             weapon:SetNoDraw(true)
@@ -177,7 +178,6 @@ local function CreateRagdollFromNPC(npc, dropWeapon)
     npc:SetMoveType(MOVETYPE_NONE)
     if npc.CapabilitiesClear then npc:CapabilitiesClear() end
 
-    -- *FIX*: Completely freeze engine AI and Lua/Nextbot thinking loops
     if npc.GetNPCState then
         npc.PreTripNPCState = npc:GetNPCState()
         npc:SetNPCState(NPC_STATE_NONE)
@@ -207,17 +207,20 @@ hook.Add("Think", "NPCTripping_Check", function()
             if not ent:IsNPC() and not ent:IsNextBot() then continue end
             if ent.NPC_TripCooldown and currentTime < ent.NPC_TripCooldown then continue end
 
-            -- *FIX: Check if NPC has legs
             if not NPCHasLegs(ent) then continue end
-
-            -- *FIX: Check blacklist and scanner types
             if IsTrippingBlacklisted(ent) then continue end
+            if IsScannerNPC(ent) and not ScannersCanTrip:GetBool() then continue end
 
-            -- *FIX Prevent forced tripping with small objects
             local vel = ent:GetVelocity()
             local velLength = vel:Length()
 
-            if IsScannerNPC(ent) and not ScannersCanTrip:GetBool() then continue end
+            if velLength < 10 and ent:IsNPC() then
+                velLength = ent:GetSequenceGroundSpeed(ent:GetSequence()) or 0
+                if velLength >= 10 then
+                    vel = ent:GetForward() * velLength
+                end
+            end
+
             if velLength < TripForceThreshold:GetFloat() then continue end
 
             local pos = ent:GetPos()
@@ -225,23 +228,28 @@ hook.Add("Think", "NPCTripping_Check", function()
             local startPos = pos + Vector(0, 0, 10)
             local endPos = startPos + forward * TripRaycastLength:GetFloat() + Vector(0, 0, -5)
 
+            local trFilter = { ent }
+            local activeWep = ent:GetActiveWeapon()
+            if IsValid(activeWep) then
+                table.insert(trFilter, activeWep)
+            end
+
             local trace = util.TraceLine({
                 start = startPos,
                 endpos = endPos,
-                filter = { ent, ent:GetActiveWeapon() },
-                mask = MASK_SHOT
+                filter = trFilter,
+                mask = MASK_SOLID
             })
 
             if trace.Hit and IsValid(trace.Entity) then
                 local hitClass = trace.Entity:GetClass()
                 local allowedToTrip = false
 
-                if hitClass == "prop_physics" then
+                if string.find(hitClass, "prop_physics") then
                     local phys = trace.Entity:GetPhysicsObject()
                     if IsValid(phys) then
                         local mass = phys:GetMass()
-                        local volume = phys:GetVolume()
-                        if mass >= 5 and volume >= 1000 then
+                        if mass >= 5 then
                             allowedToTrip = true
                         end
                     end
@@ -257,8 +265,8 @@ hook.Add("Think", "NPCTripping_Check", function()
                 local weaponClass = IsValid(weapon) and weapon:GetClass() or nil
                 local dropWeapon = weaponClass ~= nil and math.random() <= TripWeaponDropChance:GetFloat()
 
-                local npcVelocity = ent:GetVelocity()
-                local forwardForce = forward * (math.max(npcVelocity:Length(), 150) * 1.5)
+                local npcVelocity = vel
+                local forwardForce = forward * (math.max(velLength, 150) * 1.5)
                 local upwardForce = Vector(0, 0, 80)
                 local totalVelocity = npcVelocity + forwardForce + upwardForce
 
@@ -313,7 +321,6 @@ hook.Add("Think", "NPCTripping_Check", function()
         end
 
         if currentTime - data.trippedTime >= TripTimeThreshold:GetFloat() then
-            -- kill ragdoll physics velocities and collisions before restoring NPC physics
             ragdoll:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
             for i = 0, ragdoll:GetPhysicsObjectCount() - 1 do
                 local phys = ragdoll:GetPhysicsObjectNum(i)
@@ -330,7 +337,6 @@ hook.Add("Think", "NPCTripping_Check", function()
             originalNPC:SetNotSolid(true)
             originalNPC:SetMoveType(MOVETYPE_STEP)
 
-            -- *FIX*: Wake the AI back up and restore its old engine state
             originalNPC:NextThink(CurTime())
             if originalNPC.SetNPCState and originalNPC.PreTripNPCState then
                 originalNPC:SetNPCState(originalNPC.PreTripNPCState)
